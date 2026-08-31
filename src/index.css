@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global font size increases for better mobile readability */
+@layer components {
+	.text-xs { @apply text-sm; }
+	.text-sm { @apply text-base; }
+	.text-base { @apply text-lg; }
+	.text-lg { @apply text-xl; }
+	
+	p, span, label, div { @apply text-base; }
+	h1 { @apply text-4xl; }
+	h2 { @apply text-3xl; }
+	h3 { @apply text-2xl; }
+	h4 { @apply text-xl; }
+}
+
+/* Touch-friendly overrides for tablet / 10" screens */
+@media (max-width: 1200px) {
+	.touch-friendly button,
+	.touch-friendly .btn,
+	.touch-friendly .nav-btn {
+		padding: 0.9rem 1.1rem; /* larger touch area */
+		font-size: 1.125rem; /* ~18px */
+		border-radius: 0.75rem;
+	}
+
+	.touch-friendly input,
+	.touch-friendly textarea,
+	.touch-friendly select,
+	.touch-friendly .touch-input {
+		padding: 0.8rem 1rem;
+		font-size: 1.0625rem; /* ~17px */
+	}
+
+	/* Make icon buttons slightly bigger */
+	.touch-friendly .h-6 { height: 2rem; width: 2rem; }
+	.touch-friendly .h-5 { height: 1.75rem; width: 1.75rem; }
+
+	/* Sidebar width tuned for tablet */
+	.touch-friendly .sidebar { min-width: 18rem; }
+}
