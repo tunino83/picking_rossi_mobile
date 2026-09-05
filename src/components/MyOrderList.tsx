@@ -6,8 +6,8 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   Search,
-  Warehouse,
   Truck,
   Info,
   ListTodo,
@@ -98,6 +98,11 @@ export function MyOrderList() {
     "NOT COMPLETED" // Filtro iniziale: mostra tutti gli ordini non completati
   );
   const [viewMode, setViewMode] = useState<"order" | "warehouse">("order");
+  // Navigazione a singolo articolo dopo una scansione: chiavi (non le righe stesse, per restare
+  // sempre aggiornati rispetto a "orders" dopo chiusure/caricamenti) delle righe che matchano
+  // l'ITEM_CODE scansionato, su tutti gli ordini.
+  const [scannedItemKeys, setScannedItemKeys] = useState<{ headerId: number; bodyId: number }[] | null>(null);
+  const [scannedItemIndex, setScannedItemIndex] = useState(0);
   const user = useAuthStore((state) => state.user);
   const [selectedOrderRow, setSelectedOrderRow] = useState<OrderRow | null>(
     null
@@ -439,6 +444,67 @@ export function MyOrderList() {
     return sortedGrouped;
   }
 
+  // Trova, su tutti gli ordini non completati, le righe (non completate) che matchano l'item code scansionato
+  function findRowKeysForItemCode(itemCode: string): { headerId: number; bodyId: number }[] {
+    const lowerCode = itemCode.toLowerCase();
+    const keys: { headerId: number; bodyId: number }[] = [];
+    orders
+      .filter((order) => order.STATUS !== "COMPLETED")
+      .forEach((order) => {
+        (order.ROWS || [])
+          .filter(
+            (row) =>
+              row.STATUS !== "COMPLETED" &&
+              String(row.ITEM_CODE).toLowerCase().includes(lowerCode)
+          )
+          .forEach((row) =>
+            keys.push({ headerId: row.LIST_HEADER_ID, bodyId: row.LIST_BODY_ID })
+          );
+      });
+    return keys;
+  }
+
+  // Deriva le righe "live" da orders ad ogni render, cosi' restano aggiornate dopo chiusure/caricamenti
+  // e le righe completate escono automaticamente dalla navigazione
+  const scannedRows: OrderRow[] | null = scannedItemKeys
+    ? scannedItemKeys
+        .map(({ headerId, bodyId }) => {
+          const order = orders.find((o) => o.LIST_HEADER_ID === headerId);
+          return order?.ROWS?.find((r) => r.LIST_BODY_ID === bodyId) || null;
+        })
+        .filter((row): row is OrderRow => row !== null && row.STATUS !== "COMPLETED")
+    : null;
+
+  // Se la lista si accorcia (es. una riga completata esce) tiene l'indice dentro i limiti
+  useEffect(() => {
+    if (scannedRows && scannedItemIndex >= scannedRows.length && scannedRows.length > 0) {
+      setScannedItemIndex(scannedRows.length - 1);
+    }
+  }, [scannedRows?.length]);
+
+  // Se la ricerca corrisponde esattamente a un numero ordine, recap delle righe per picking zone
+  const exactSearchOrderMatch = (() => {
+    const trimmed = searchTerm.trim();
+    if (!trimmed) return null;
+    return orders.find((o) => String(o.LIST_HEADER_ID) === trimmed) || null;
+  })();
+
+  const pickingZoneRecap: { zone: string; done: number; total: number }[] | null =
+    exactSearchOrderMatch
+      ? (() => {
+          const zones: Record<string, { done: number; total: number }> = {};
+          (exactSearchOrderMatch.ROWS || []).forEach((row) => {
+            const zone = row.LOCATION_CODE_FROM_GROUP || "-";
+            if (!zones[zone]) zones[zone] = { done: 0, total: 0 };
+            zones[zone].total += 1;
+            if (row.STATUS === "COMPLETED") zones[zone].done += 1;
+          });
+          return Object.entries(zones)
+            .map(([zone, counts]) => ({ zone, ...counts }))
+            .sort((a, b) => a.zone.localeCompare(b.zone));
+        })()
+      : null;
+
   // Funzione per gestire la scansione QR (mock, da integrare con una libreria reale)
   function handleScanQRCode() {
     // Qui puoi integrare una libreria come html5-qrcode o simili
@@ -772,6 +838,27 @@ export function MyOrderList() {
               />
             </div>
           </div>
+          {/* Recap righe per picking zone: solo quando la ricerca corrisponde esattamente a un numero ordine */}
+          {pickingZoneRecap && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="px-4 py-2 text-sm font-semibold text-gray-600">{t('orders.LOCATION_CODE_FROM_GROUP')}</th>
+                    <th className="px-4 py-2 text-sm font-semibold text-gray-600">{t('orders.rows')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pickingZoneRecap.map(({ zone, done, total }) => (
+                    <tr key={zone} className="border-b border-gray-100 last:border-b-0">
+                      <td className="px-4 py-2 text-base font-medium">{zone}</td>
+                      <td className="px-4 py-2 text-base">{done}/{total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
         {/* Modal QR Reader con html5-qrcode */}
         {showQrReader && (
@@ -949,6 +1036,111 @@ export function MyOrderList() {
           </div>
         )}
 
+        {/* NAVIGAZIONE A SINGOLO ARTICOLO (dopo scansione QR di un ITEM) */}
+        {scannedRows !== null ? (
+          <div className="p-4">
+            {scannedRows.length === 0 ? (
+              <div className="text-center text-gray-500 py-12">
+                <p className="text-xl mb-6">{t('orders.noMatchesForItem', 'Nessun ordine trovato per questo articolo')}</p>
+                <button
+                  className="btn px-6 py-3 bg-blue-600 text-white rounded-lg text-lg font-semibold"
+                  onClick={() => setScannedItemKeys(null)}
+                >
+                  {t('common.close')}
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-4 max-w-2xl mx-auto">
+                  <button
+                    className="btn p-2 text-gray-400 hover:text-gray-600 text-3xl"
+                    onClick={() => setScannedItemKeys(null)}
+                    title={t('common.close')}
+                  >
+                    ×
+                  </button>
+                  <span className="text-xl font-semibold text-gray-700">
+                    {scannedItemIndex + 1} / {scannedRows.length}
+                  </span>
+                  <span className="w-10" />
+                </div>
+
+                {(() => {
+                  const row = scannedRows[scannedItemIndex];
+                  const order = orders.find((o) => o.LIST_HEADER_ID === row.LIST_HEADER_ID);
+                  return (
+                    <div
+                      className="bg-white rounded shadow p-6 flex flex-col gap-5 border-l-4 max-w-2xl mx-auto"
+                      style={{
+                        borderLeftColor:
+                          row.STATUS === "IN PROGRESS" ? "#3b82f6" : "#facc15",
+                      }}
+                    >
+                      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3">
+                        <div>
+                          <span className="font-semibold text-2xl text-gray-600">{t('orders.orderId')}:</span>
+                          <p className="text-2xl font-medium">{row.LIST_HEADER_ID}</p>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-2xl text-gray-600">{t('orders.itemCode')}:</span>
+                          <p className="text-2xl font-medium">{row.ITEM_CODE}</p>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-2xl text-gray-600">{t('orders.locationFrom')}:</span>
+                          <p className="text-2xl">{row.LOCATION_CODE_FROM}</p>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-2xl text-gray-600">{t('common.quantity')}:</span>
+                          <p className="text-2xl">{row.WORKED_QUANTITY} / {row.QUANTITY}</p>
+                        </div>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-2xl text-gray-600">{t('orders.description')}:</span>
+                        <p className="text-2xl">{row.ITEM_DESCRIPTION}</p>
+                      </div>
+                      {order && order.STATUS !== "COMPLETED" && row.STATUS !== "COMPLETED" && (
+                        <div className="flex justify-end gap-3 mt-4">
+                          <button
+                            className="btn px-6 py-4 text-2xl text-blue-600 rounded-md border-2 border-blue-600 hover:bg-blue-50 font-semibold"
+                            onClick={() => closeOrderRow(row.LIST_HEADER_ID, row.LIST_BODY_ID)}
+                          >
+                            {t('orders.closeRow')}
+                          </button>
+                          <button
+                            className="btn px-6 py-4 text-2xl text-white bg-blue-600 rounded-md hover:bg-blue-700 flex items-center gap-3 font-semibold"
+                            onClick={() => setSelectedOrderRow(row)}
+                            title={t('orders.loadItem')}
+                          >
+                            <BaggageClaim className="w-8 h-8" />
+                            <span>{t('common.load')}</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div className="flex items-center justify-between mt-6 max-w-2xl mx-auto gap-4">
+                  <button
+                    className="btn flex-1 px-6 py-4 rounded-lg bg-gray-200 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-xl font-semibold flex items-center justify-center gap-2"
+                    disabled={scannedItemIndex === 0}
+                    onClick={() => setScannedItemIndex((i) => Math.max(0, i - 1))}
+                  >
+                    <ChevronLeft className="w-6 h-6" /> {t('common.previous', 'Indietro')}
+                  </button>
+                  <button
+                    className="btn flex-1 px-6 py-4 rounded-lg bg-blue-600 text-white disabled:opacity-40 disabled:cursor-not-allowed text-xl font-semibold flex items-center justify-center gap-2"
+                    disabled={scannedItemIndex >= scannedRows.length - 1}
+                    onClick={() => setScannedItemIndex((i) => Math.min(scannedRows.length - 1, i + 1))}
+                  >
+                    {t('common.next', 'Avanti')} <ChevronRight className="w-6 h-6" />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
+        <>
         {/* VISUALIZZAZIONE PER ORDINE */}
         {viewMode === "order" ? (
           <>
@@ -1093,18 +1285,28 @@ export function MyOrderList() {
                                   borderRadius: "0.375rem",
                                 }}
                               >
-                                <div className="flex items-center space-x-4">
-                                    <UserIcon className="h-6 w-6 text-gray-400" />
-                                    <div>
-                                      <p className="text-sm font-medium">
-                                        {orderRow.ASSIGNED_TO || "Unassigned"}
-                                      </p>
-                                    </div>
+                                {/* Blocco principale: ordine di lettura richiesto per l'operatore Magazzino
+                                    (Order Type, Order Number, Item Code, Description, Quantity, From, To) */}
+                                <div className="flex flex-col gap-2">
+                                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                                    <UserIcon className="h-4 w-4" />
+                                    {orderRow.ASSIGNED_TO || "Unassigned"}
                                   </div>
-                                <div className="flex items-center space-x-4">
-                                  <Package className="h-6 w-6 text-gray-400" />
-                                  <div>
-                                    <p
+                                  <p className="text-sm font-medium">
+                                    Order Type: <span className="font-semibold">{orderRow.PURCHASE_OR_SALES_OR_ASSEMBLY_ORDER_TYPE || "-"}</span>
+                                  </p>
+                                  <p className="text-sm font-medium">
+                                    Order Number: <span className="font-semibold">{orderRow.PURCHASE_OR_SALES_OR_ASSEMBLY_ORDER_NUMBER || "-"}</span>
+                                  </p>
+                                  <p className="text-sm font-medium">
+                                    Item Code: <span className="font-semibold">{orderRow.ITEM_CODE}</span>
+                                  </p>
+                                  <p className="text-sm font-medium">
+                                    Description: <span className="font-semibold">{orderRow.ITEM_DESCRIPTION}</span>
+                                  </p>
+                                  <p className="text-sm font-medium flex items-center gap-2">
+                                    Quantity:
+                                    <span
                                       className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize"
                                       style={{
                                         backgroundColor:
@@ -1124,47 +1326,18 @@ export function MyOrderList() {
                                       {React.createElement(
                                         statusIcons["IN PROGRESS"],
                                         {
-                                          className: "mr-1 h-5 w-5",
+                                          className: "mr-1 h-4 w-4",
                                         }
                                       )}
-                                      {orderRow.STATUS}{" "}
-                                      {orderRow.WORKED_QUANTITY} /{" "}
-                                      {orderRow.QUANTITY}
-                                    </p>
-                                    <p className="text-sm font-medium">
-                                      ITEM CODE :{orderRow.ITEM_CODE}
-                                    </p>
-                                    <p className="text-xs text-gray-500">
-                                      Short Code: {orderRow.ITEM_SHORT_CODE},
-                                      Description{" "}
-                                      {orderRow.ITEM_DESCRIPTION},
-                                    </p>
-                                    <p className="text-xs text-gray-500">
-                                      Quantity: {orderRow.QUANTITY}{" "}
-                                      {
-                                        orderRow.MEASURE_UNIT_DESCRIPTION
-                                      }{" "}
-                                      | Weight: {orderRow.WEIGHT}{" "}
-                                      {orderRow.WEIGHT_MEASURE_UNIT_CODE}
-                                    </p>
-                                  </div>
-                                </div>
-                                <div className="flex items-center space-x-4">
-                                  <Warehouse className="h-6 w-6 text-gray-400" />
-                                  <div>
-                                    <p className="text-sm font-medium">
-                                      WAREHOUSE: {orderRow.WAREHOUSE_NAME}
-                                    </p>
-                                    <p className="text-xs text-gray-500">
-                                      Warehouse code: {orderRow.WAREHOUSE_CODE}
-                                    </p>
-                                    <p className="text-xs text-gray-500">
-                                      From: {orderRow.LOCATION_CODE_FROM}
-                                    </p>
-                                    <p className="text-xs text-gray-500">
-                                      To: {orderRow.LOCATION_CODE_TO}
-                                    </p>
-                                  </div>
+                                      {orderRow.WORKED_QUANTITY} / {orderRow.QUANTITY}
+                                    </span>
+                                  </p>
+                                  <p className="text-sm font-medium">
+                                    From: <span className="font-semibold">{orderRow.LOCATION_CODE_FROM}</span>
+                                  </p>
+                                  <p className="text-sm font-medium">
+                                    To: <span className="font-semibold">{orderRow.LOCATION_CODE_TO}</span>
+                                  </p>
                                 </div>
 
                                 <div className="flex items-center space-x-4">
@@ -1218,24 +1391,14 @@ export function MyOrderList() {
                                         }
                                       </p>
                                     )}
-                                    {orderRow.PURCHASE_OR_SALES_OR_ASSEMBLY_ORDER_TYPE && (
-                                      <p className="text-xs text-gray-500">
-                                        Order Type:{" "}
-                                        {
-                                          orderRow.PURCHASE_OR_SALES_OR_ASSEMBLY_ORDER_TYPE
-                                        }
-                                      </p>
-                                    )}
                                     {orderRow.TRANSFER_DOCUMENT_TYPE && (
                                       <p className="text-xs text-gray-500">
                                         Document Type:{" "}
                                         {orderRow.TRANSFER_DOCUMENT_TYPE}
                                       </p>
                                     )}
-                                    {orderRow.TRANSFER_DOCUMENT_ORDER_NUMBER !=
-                                      null &&
-                                      orderRow.TRANSFER_DOCUMENT_ORDER_NUMBER !==
-                                        "0" && (
+                                    {orderRow.TRANSFER_DOCUMENT_ORDER_NUMBER != null &&
+                                      String(orderRow.TRANSFER_DOCUMENT_ORDER_NUMBER) !== "0" && (
                                         <p className="text-xs text-gray-500">
                                           Transfer Order Number:{" "}
                                           {
@@ -1402,6 +1565,8 @@ export function MyOrderList() {
             )}
           </div>
         )}
+        </>
+        )}
       </div>
 
       {/* DEBUG PANEL - Mostra i log in tempo reale SOLO se abilitato nel DB */}
@@ -1467,14 +1632,18 @@ export function MyOrderList() {
               <button
                 className="bg-blue-600 text-white px-8 py-4 rounded hover:bg-blue-700 btn text-lg font-semibold"
                 onClick={() => {
-                  setViewMode("warehouse");
                   const itemCode = qrJsonFields["ITEM"] || qrJsonFields["ITEM_CODE"];
-                  if(itemCode && itemCode){
-                    setSearchTerm(`ITEM: ${itemCode}`);
-                  } else if (!itemCode && qrJsonFields["LOCATION"]) {
-                    setSearchTerm(`LOCATION: ${qrJsonFields["LOCATION"]}`);
+                  if (itemCode) {
+                    // Naviga tra tutte le righe che hanno questo item, una alla volta
+                    setScannedItemKeys(findRowKeysForItemCode(String(itemCode)));
+                    setScannedItemIndex(0);
                   } else {
-                    setSearchTerm(``);
+                    setViewMode("warehouse");
+                    if (qrJsonFields["LOCATION"]) {
+                      setSearchTerm(`LOCATION: ${qrJsonFields["LOCATION"]}`);
+                    } else {
+                      setSearchTerm(``);
+                    }
                   }
                   setQrJsonFields(null);
                   setQrResult("");

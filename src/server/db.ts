@@ -409,12 +409,20 @@ export async function addTransactionLog(type: string,orderData: {
       FROM LIST_HEADER lh
       WHERE lh.LIST_HEADER_ID = @listHeaderId
         `;
-        return executeQuery(query, { 
+        const closeHeaderResult = await executeQuery(query, {
           deviceCode: 'web',
           userEmail: orderData.userEmail || 'system',
           customField2: 'Chiusura ordine testata '+ orderData.headerId,
           listHeaderId: orderData.headerId
          });
+        // Pulizia: una volta chiuso davvero l'ordine, le conferme checkbox non servono piu'
+        await executeQuery(`
+          DELETE FROM [SUPPORT].[dbo].[ROW_CONFIRMATIONS]
+          WHERE LIST_BODY_ID IN (
+            SELECT LIST_BODY_ID FROM [SUPPORT].[dbo].[LIST_BODY] WHERE LIST_HEADER_ID = @listHeaderId
+          )
+        `, { listHeaderId: orderData.headerId });
+        return closeHeaderResult;
     } else if(type === 'CLOSE_BODY'){
       const query = `
       INSERT INTO [SUPPORT].[dbo].[TRANSACTION_LOG] (
@@ -722,6 +730,30 @@ export async function cleanup2FACodes() {
   return executeQuery(`
     DELETE FROM TwoFactorCodes WHERE expiresAt < GETDATE()
   `);
+}
+
+// Conferme righe (checkbox) nella pagina di chiusura ordini, persistite per utente
+export async function getConfirmedRows(userId: string): Promise<number[]> {
+  const rows = await executeQuery<{ LIST_BODY_ID: number }>(`
+    SELECT LIST_BODY_ID FROM [SUPPORT].[dbo].[ROW_CONFIRMATIONS] WHERE USER_ID = @userId
+  `, { userId });
+  return rows.map((r) => r.LIST_BODY_ID);
+}
+
+export async function setRowConfirmed(userId: string, bodyId: number, confirmed: boolean) {
+  if (confirmed) {
+    await executeQuery(`
+      MERGE [SUPPORT].[dbo].[ROW_CONFIRMATIONS] AS target
+      USING (SELECT @bodyId AS LIST_BODY_ID, @userId AS USER_ID) AS source
+      ON target.LIST_BODY_ID = source.LIST_BODY_ID AND target.USER_ID = source.USER_ID
+      WHEN NOT MATCHED THEN
+        INSERT (LIST_BODY_ID, USER_ID, CONFIRMED_AT) VALUES (source.LIST_BODY_ID, source.USER_ID, GETDATE());
+    `, { bodyId, userId });
+  } else {
+    await executeQuery(`
+      DELETE FROM [SUPPORT].[dbo].[ROW_CONFIRMATIONS] WHERE LIST_BODY_ID = @bodyId AND USER_ID = @userId
+    `, { bodyId, userId });
+  }
 }
 
 export function getWarehouses(): Warehouse[] | PromiseLike<Warehouse[]> {

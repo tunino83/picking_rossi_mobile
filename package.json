@@ -13,6 +13,8 @@
     "build": "npm run build-gui && npm run build-server",
     "build-gui": "vite build --outDir dist-gui",
     "build-server": "tsc --project tsconfig.server.json --outDir dist-server",
+    "build-apk": "powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1",
+    "build-apk-release": "powershell -ExecutionPolicy Bypass -File scripts/build-apk.ps1 -Release",
     "lint": "eslint .",
     "preview": "vite preview"
   },

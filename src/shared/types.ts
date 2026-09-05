@@ -8,7 +8,7 @@ export interface User {
   role: Role;
   NAME: string;
   twoFactorEnabled?: boolean;
-  enabled?: boolean;
+  enabled?: 0 | 1;
   passwordHash?: string;
   WAREHOUSE_CODE?: string;
   WAREHOUSE_NAME?: string;

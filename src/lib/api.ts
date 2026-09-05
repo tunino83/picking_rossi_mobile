@@ -140,6 +140,18 @@ class ApiClient {
     return this.request<{ warehouses: Warehouse[]; total: number }>('/warehouses');
   }
 
+  // Conferme righe (checkbox) nella pagina di chiusura ordini
+  async getConfirmedRows() {
+    return this.request<{ bodyIds: number[] }>('/orders/confirmations');
+  }
+
+  async setRowConfirmed(bodyId: number, confirmed: boolean) {
+    return this.request<{ message: string }>('/orders/confirmations', {
+      method: 'PUT',
+      body: JSON.stringify({ bodyId, confirmed }),
+    });
+  }
+
   async getStock(warehouseCode?: string, page: number = 1, limit: number = 25) {
     const qsParts: string[] = [];
     if (warehouseCode) qsParts.push(`warehouseCode=${encodeURIComponent(warehouseCode)}`);

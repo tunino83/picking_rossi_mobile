@@ -31,7 +31,7 @@ if (process.env.NODE_ENV && process.env.NODE_ENV === 'productionXXX') {
       'http://rossi-warehouse-portal.com'
     ],
     credentials: true,
-  });
+  }));
 } else {
   // In development allow requests from any origin to simplify local testing (including https://localhost used by the WebView)
   app.use(cors({
@@ -671,6 +671,35 @@ app.get('/api/warehouses', authenticateToken, async (req: express.Request, res: 
 
     res.json({ warehouses, total: warehouses.length });
   } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Conferme righe (checkbox) nella pagina di chiusura ordini, persistite per utente
+app.get('/api/orders/confirmations', authenticateToken, async (req: express.Request, res: express.Response) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const bodyIds = await db.getConfirmedRows(authReq.user.id);
+    res.json({ bodyIds });
+  } catch (error) {
+    console.error('Get confirmed rows error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/orders/confirmations', authenticateToken, async (req: express.Request, res: express.Response) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const { bodyId, confirmed } = req.body;
+
+    if (!bodyId || typeof confirmed !== 'boolean') {
+      return res.status(400).json({ error: 'bodyId and confirmed (boolean) required' });
+    }
+
+    await db.setRowConfirmed(authReq.user.id, bodyId, confirmed);
+    res.json({ message: 'OK' });
+  } catch (error) {
+    console.error('Set confirmed row error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

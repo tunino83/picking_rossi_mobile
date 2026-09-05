@@ -51,6 +51,29 @@ const [rowsPerPage, setRowsPerPage] = useState(10);
   
   const [confirmedRows, setConfirmedRows] = useState<Record<number, boolean>>({});
 
+  // Carica le conferme gia' salvate (persistenti su DB, per utente)
+  useEffect(() => {
+    apiClient.getConfirmedRows().then((response) => {
+      const initial: Record<number, boolean> = {};
+      response.bodyIds.forEach((id) => { initial[id] = true; });
+      setConfirmedRows(initial);
+    }).catch((error) => {
+      console.error("Failed to load confirmed rows:", error);
+    });
+  }, []);
+
+  // Spunta/togli una riga: aggiornamento ottimistico, con rollback se la chiamata fallisce
+  const handleToggleConfirm = async (bodyId: number, checked: boolean) => {
+    setConfirmedRows((prev) => ({ ...prev, [bodyId]: checked }));
+    try {
+      await apiClient.setRowConfirmed(bodyId, checked);
+    } catch (error) {
+      console.error("Failed to save row confirmation:", error);
+      setConfirmedRows((prev) => ({ ...prev, [bodyId]: !checked }));
+      alert(t("orders.confirmSaveError", "Impossibile salvare la conferma, riprova."));
+    }
+  };
+
     async function closeOrder(headerId: number) {
       const result = await Swal.fire({
         title: "Sei sicuro?",
@@ -463,12 +486,7 @@ const totalPages =  Math.ceil(filteredOrders.length / rowsPerPage);
                                         <input
                                             type="checkbox"
                                             checked={confirmedRows[orderRow.LIST_BODY_ID] || false}
-                                            onChange={(e) => {
-                                            setConfirmedRows((prev) => ({
-                                                ...prev,
-                                                [orderRow.LIST_BODY_ID]: e.target.checked,
-                                            }));
-                                            }}
+                                            onChange={(e) => handleToggleConfirm(orderRow.LIST_BODY_ID, e.target.checked)}
                                             title="Conferma prima di chiudere"
                                             className="accent-blue-600"
                                         />
