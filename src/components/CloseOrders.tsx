@@ -74,6 +74,32 @@ const [rowsPerPage, setRowsPerPage] = useState(10);
     }
   };
 
+  // Conferma/rimuovi conferma su tutte le righe di un ordine in un colpo solo
+  const handleToggleConfirmAll = async (order: Order, confirmed: boolean) => {
+    const bodyIds = (order.ROWS || []).map((row) => row.LIST_BODY_ID);
+    if (bodyIds.length === 0) return;
+
+    setConfirmedRows((prev) => {
+      const next = { ...prev };
+      bodyIds.forEach((id) => { next[id] = confirmed; });
+      return next;
+    });
+
+    try {
+      await Promise.all(bodyIds.map((id) => apiClient.setRowConfirmed(id, confirmed)));
+    } catch (error) {
+      console.error("Failed to save all row confirmations:", error);
+      // Rollback: ricarica lo stato reale dal server per non restare disallineati
+      try {
+        const response = await apiClient.getConfirmedRows();
+        const reloaded: Record<number, boolean> = {};
+        response.bodyIds.forEach((id) => { reloaded[id] = true; });
+        setConfirmedRows(reloaded);
+      } catch {}
+      alert(t("orders.confirmSaveError", "Impossibile salvare la conferma, riprova."));
+    }
+  };
+
     async function closeOrder(headerId: number) {
       const result = await Swal.fire({
         title: "Sei sicuro?",
@@ -377,9 +403,27 @@ const totalPages =  Math.ceil(filteredOrders.length / rowsPerPage);
                       <tr>
                         <td colSpan={6} className="px-4 py-4 bg-gray-50">
                           <div className="space-y-4">
-                            <h4 className="text-sm font-medium text-gray-900">
-                              {t("orders.rows")}                            
-                            </h4>
+                            <div className="flex items-center justify-between">
+                              <h4 className="text-sm font-medium text-gray-900">
+                                {t("orders.rows")}
+                              </h4>
+                              {order.ROWS && order.ROWS.length > 0 && (() => {
+                                const allChildrenConfirmed = order.ROWS.every((row) => confirmedRows[row.LIST_BODY_ID]);
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleConfirmAll(order, !allChildrenConfirmed)}
+                                    className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                                      allChildrenConfirmed
+                                        ? "bg-green-600 text-white hover:bg-green-700"
+                                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                    }`}
+                                  >
+                                    {allChildrenConfirmed ? t("common.removeConfirmAll", "Rimuovi conferma tutti") : t("common.confirmAll", "Conferma tutti")}
+                                  </button>
+                                );
+                              })()}
+                            </div>
                             <div className="grid gap-4">
                               {order.ROWS ? (
                                 order.ROWS.map((orderRow) => (
@@ -481,15 +525,19 @@ const totalPages =  Math.ceil(filteredOrders.length / rowsPerPage);
                                         </div>
                                       </div>
 
-                                        <div className="flex items-start space-x-2" style={{ justifyContent: 'flex-end' }}>
-                                        <span className="text-xs text-gray-600">{t("common.confirm")}</span>
-                                        <input
-                                            type="checkbox"
-                                            checked={confirmedRows[orderRow.LIST_BODY_ID] || false}
-                                            onChange={(e) => handleToggleConfirm(orderRow.LIST_BODY_ID, e.target.checked)}
+                                        <div className="flex items-start" style={{ justifyContent: 'flex-end' }}>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleToggleConfirm(orderRow.LIST_BODY_ID, !confirmedRows[orderRow.LIST_BODY_ID])}
                                             title="Conferma prima di chiudere"
-                                            className="accent-blue-600"
-                                        />
+                                            className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                                              confirmedRows[orderRow.LIST_BODY_ID]
+                                                ? "bg-green-600 text-white hover:bg-green-700"
+                                                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                            }`}
+                                        >
+                                            {confirmedRows[orderRow.LIST_BODY_ID] ? t("common.removeConfirm", "Rimuovi conferma") : t("common.confirm")}
+                                        </button>
                                         </div>
 
                                     {/*<select
